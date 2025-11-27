@@ -1,0 +1,139 @@
+---
+- name: Deploy Election Voting System with Docker
+  hosts: webservers
+  become: yes
+  vars:
+    app_name: election-voting-system
+    app_port: 3000
+    github_repo: https://github.com/ChanakyaVakkalagadda/Online_Voting_System.git
+    app_directory: /opt/election-voting-system
+    supabase_url: "{{ lookup('env', 'VITE_SUPABASE_URL') }}"
+    supabase_key: "{{ lookup('env', 'VITE_SUPABASE_PUBLISHABLE_KEY') }}"
+    supabase_project_id: "{{ lookup('env', 'VITE_SUPABASE_PROJECT_ID') }}"
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - git
+        state: present
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Install Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Start and enable Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add user to docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+
+    - name: Create application directory
+      file:
+        path: "{{ app_directory }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+
+    - name: Clone/Update repository
+      git:
+        repo: "{{ github_repo }}"
+        dest: "{{ app_directory }}"
+        version: master
+        force: yes
+      become_user: "{{ ansible_user }}"
+
+    - name: Create .env.production file
+      copy:
+        dest: "{{ app_directory }}/.env.production"
+        content: |
+          VITE_SUPABASE_URL={{ supabase_url }}
+          VITE_SUPABASE_PUBLISHABLE_KEY={{ supabase_key }}
+          VITE_SUPABASE_PROJECT_ID={{ supabase_project_id }}
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+
+    - name: Stop existing container
+      docker_container:
+        name: "{{ app_name }}"
+        state: absent
+      ignore_errors: yes
+
+    - name: Remove old Docker image
+      docker_image:
+        name: "{{ app_directory }}-voting-app"
+        state: absent
+      ignore_errors: yes
+
+    - name: Build Docker image
+      command: docker compose build --no-cache
+      args:
+        chdir: "{{ app_directory }}"
+      environment:
+        VITE_SUPABASE_URL: "{{ supabase_url }}"
+        VITE_SUPABASE_PUBLISHABLE_KEY: "{{ supabase_key }}"
+        VITE_SUPABASE_PROJECT_ID: "{{ supabase_project_id }}"
+
+    - name: Start Docker container
+      command: docker compose up -d
+      args:
+        chdir: "{{ app_directory }}"
+      environment:
+        VITE_SUPABASE_URL: "{{ supabase_url }}"
+        VITE_SUPABASE_PUBLISHABLE_KEY: "{{ supabase_key }}"
+        VITE_SUPABASE_PROJECT_ID: "{{ supabase_project_id }}"
+
+    - name: Wait for container to be healthy
+      wait_for:
+        port: "{{ app_port }}"
+        delay: 5
+        timeout: 60
+
+    - name: Configure UFW firewall
+      ufw:
+        rule: allow
+        port: "{{ app_port }}"
+        proto: tcp
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Display deployment info
+      debug:
+        msg: 
+          - "Deployment completed successfully!"
+          - "Application is running at: http://{{ ansible_host }}:{{ app_port }}"
+          - "Container name: {{ app_name }}"
+          - "Check logs: docker logs {{ app_name }}"
