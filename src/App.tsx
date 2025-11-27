@@ -21,12 +21,15 @@ import Results from "./pages/Results";
 
 const queryClient = new QueryClient();
 
+// Use basename for GitHub Pages only, not for Docker/local
+const basename = import.meta.env.VITE_DEPLOY_TARGET === 'github-pages' ? '/Online_Voting_System' : '/';
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BrowserRouter basename="/Online_Voting_System">
+      <BrowserRouter basename={basename}>
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/results" element={<Results />} />
